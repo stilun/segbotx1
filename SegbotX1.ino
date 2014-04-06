@@ -11,17 +11,19 @@
 // If you are concerned with the safety of this project, it may not be for you.
 // Test thoroughly with wheels off the ground before attempting to ride - Wear a helmet!
 
-// modifierad 2013-11-18
+// modifierad 2014-03-18
 
 int ready_led = 4;
+int batt_led_24V = 12;
+int batt_led_23V = 2;
 
 // Name Analog input pins
-int gyro_pin = 2; // connect the gyro Y axis (4.5x output) to Analog input 2
-int accel_pin = 0; // connect the accelerometer X axis to Analog input 0
-int steeringPot = 3; // connect the steering potentiometer to Analog input 3
-int gainPot = 4; // connect the gain potentiometer to Analog input 4
-// Name Digital I/O pins
+int gyro_pin = A2; // connect the gyro Y axis (4.5x output) to Analog input 2
+int accel_pin = A0; // connect the accelerometer X axis to Analog input 0
+int steeringPot = A3; // connect the steering potentiometer to Analog input 3
+int sensorPin = A1;  // Batterispänningen via spänningsdelare 68k + 10k
 
+// Name Digital I/O pins
 // value to hold the final angle
 float angle = 0.00;
 float angle_old = 0.00;
@@ -48,11 +50,11 @@ float gyro_angle;
 float loop_time = -0.02;
 
 // engage button variables
-int engage_switch = 7;
+int sensorValue = 0;
+int engage_switch = 8;
+int foot_switch = 7;
 int engage = false;
-int engage_state = 1;
 // timer variables
-int last_update;
 int cycle_time;
 long last_cycle = 0;
 // motor speed variables
@@ -69,7 +71,6 @@ int steer_range = 60;
 int steer_reading;
 int steer_min;
 int steer_max;
-int gain_reading;
 int gain_val;
 
 // Ny kod
@@ -101,6 +102,9 @@ void calibrate()
   // Kalibrering av styrpotentiometern
   steer_max = analogRead(steeringPot) + 250;
   steer_min = analogRead(steeringPot) - 250;
+   // let pin voltage settle
+  delay(100);
+  digitalWrite(ready_led, HIGH);
 }
 
 // end of Variables
@@ -110,18 +114,19 @@ void setup()
   Serial.begin(9600);
   // set the engage_switch pin as an Input
   pinMode(engage_switch, INPUT);
+  pinMode(foot_switch, INPUT);
+  pinMode(ready_led, OUTPUT);
+  pinMode(batt_led_24V, OUTPUT);
+  pinMode(batt_led_23V, OUTPUT);
   // enable the Arduino internal pull-up resistor on the engage_switch pin.
   digitalWrite(engage_switch, HIGH);
+  digitalWrite(foot_switch, HIGH);
   // Tell Arduino to use the Aref pin for the Analog voltage, don't forget to connect 3.3v to Aref!
   analogReference(EXTERNAL);
+
   // calibrate gyro and accelerometer, 
   // you should keep the Seg-bot still and level when turning on so calibration will be accurate
   calibrate();
-
-  pinMode(ready_led, OUTPUT);
-  digitalWrite(ready_led, LOW);
-  // let pin voltage settle
-  delay(100);
 
    // Reglerparametrar
   K = 0.9; // Förstärkningsfaktor
@@ -140,16 +145,16 @@ void loop()
   sample_gyro();
   // combine the accel and gyro readings to come up with a "filtered" angle reading
   calculate_angle();
-
   // read the values of each potentiometer
   read_pots();
   // make sure bot is level before activating the motors
   auto_level();
   // update the motors with the new values
   update_motor_speed();
+    // Kontroll av batterispänningen
+  battery_level();
   // check the loop cycle time and add a delay as necessary
   time_stamp();
-
 }
 
 void sample_accel()
@@ -182,26 +187,41 @@ void read_pots()
   // We want to map this into a range between -1 and 1, and set that to steer_val
   steer_reading = analogRead(steeringPot);
   steer_val = map(steer_reading,  steer_min, steer_max, steer_range, -steer_range);
-  /*if (angle == 0.00)
+  
+  gain_val = 64;
+}
+
+void battery_level()
+{
+  // Övervakar batterispänningen
+  sensorValue = analogRead(sensorPin);   
+  if (sensorValue < 960 && sensorValue >= 928)
   {
-    gain_reading = 0;
-  }*/
-  // Gain potentiometer
-  gain_reading = analogRead(gainPot);
-  gain_val = map(gain_reading, 0, 1023, 32, 64);
+    digitalWrite(batt_led_24V, HIGH);  // 24V indikering
+    digitalWrite(batt_led_23V, LOW);  
+  }
+  else if (sensorValue < 928)
+  {
+    digitalWrite(batt_led_23V, HIGH);   // 23V indikering
+    digitalWrite(batt_led_24V, LOW);  
+  }
+  else
+  {
+    digitalWrite(batt_led_24V, LOW);  
+    digitalWrite(batt_led_23V, LOW);    // turn the LED off by making the voltage LOW
+  } 
 }
 
 void auto_level()
 {
   // enable auto-level turn On
-  //engage_state = digitalRead(engage_switch);
-  if (digitalRead(engage_switch) == 1)
+  if (digitalRead(engage_switch) == 1 || digitalRead(foot_switch) == 1)
   {
     delay(10);
-    if (digitalRead(engage_switch) == 1)
+    if (digitalRead(engage_switch) == 1 || digitalRead(foot_switch) == 1)
     {
       engage = false;
-      digitalWrite(ready_led, LOW);
+      digitalWrite(ready_led, HIGH);
     }
   }
   else 
@@ -211,18 +231,18 @@ void auto_level()
       if (angle < 0.02 && angle > -0.02)
       {
         engage = true;
-        digitalWrite(ready_led, HIGH);
+        digitalWrite(ready_led, LOW);
       }
       else 
       {
         engage = false;
-        digitalWrite(ready_led, LOW);
+        digitalWrite(ready_led, HIGH);
       }
     }
     else 
     {
       engage = true;
-      digitalWrite(ready_led, HIGH);
+      digitalWrite(ready_led, LOW);
     }
   }
 }
@@ -309,12 +329,12 @@ void update_motor_speed()
 
 void time_stamp()
 {
-  // check to make sure it has been exactly 50 milliseconds since the last recorded time-stamp
+  // check to make sure it has been exactly 20 milliseconds since the last recorded time-stamp
   while((millis() - last_cycle) < 20)
   {
     delay(1);
   }
-  // once the loop cycle reaches 50 mS, reset timer value and proceed
+  // once the loop cycle reaches 20 mS, reset timer value and proceed
   cycle_time = millis() - last_cycle;
   last_cycle = millis();
 }
